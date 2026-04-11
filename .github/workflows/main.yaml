@@ -13,21 +13,31 @@ env:
 jobs:
   build-binaries:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
+        include:
+          # Linux — собираем через cross на ubuntu
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            use_cross: true
+          # Windows — собираем нативно на windows-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Ensure cross is installed
-        run: |
-          cargo install cross
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1.15.4
@@ -35,21 +45,48 @@ jobs:
           target: ${{ matrix.target }}
           cache: true
 
-      - name: Build
+      - name: Ensure cross is installed (Linux only)
+        if: matrix.use_cross == true
+        run: cargo install cross
+
+      - name: Build (cross)
+        if: matrix.use_cross == true
         run: cross build --target ${{ matrix.target }} --release
 
-      - name: Package
+      - name: Build (cargo)
+        if: matrix.use_cross == false
+        run: cargo build --target ${{ matrix.target }} --release
+
+      # ── Упаковка Linux ──────────────────────────────────────────────────────
+      - name: Package (Linux)
+        if: matrix.use_cross == true
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../redlib-${{ matrix.target }}.tar.gz redlib
           cd ../../../
 
-      - name: Upload Artifacts
+      # ── Упаковка Windows ────────────────────────────────────────────────────
+      - name: Package (Windows)
+        if: matrix.use_cross == false
+        shell: pwsh
+        run: |
+          $src = "target\${{ matrix.target }}\release\redlib.exe"
+          $dst = "redlib-${{ matrix.target }}.zip"
+          Compress-Archive -Path $src -DestinationPath $dst
+
+      - name: Upload Artifacts (Linux)
+        if: matrix.use_cross == true
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: binaries-${{ matrix.target }}
-          path: |
-            redlib-${{ matrix.target }}.tar.gz
+          path: redlib-${{ matrix.target }}.tar.gz
+
+      - name: Upload Artifacts (Windows)
+        if: matrix.use_cross == false
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: binaries-${{ matrix.target }}
+          path: redlib-${{ matrix.target }}.zip
 
   build-docker:
     name: Build and Push Docker Images
